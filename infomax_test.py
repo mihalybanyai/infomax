@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import itertools
+import cProfile, pstats
 
 def observation_likelihood(observation, parameter):
     # Bernoulli
@@ -32,8 +33,19 @@ def mutual_information(parameter_prior, n_obs):
 
 
 parameter_resolution = 10
-n_obs = 1
+n_obs = 10
 
+# 100 particles into 10 bins: 10^100 possibilities - not so nice
+# what is a reasonable basis for this? one could just start from the uniform, and move one particle at a time, 
+# that's roughly 100 possibilities in each step. to arrive to a fully binary distribution, one would need at least 80 steps, 
+# so 8000 evaluations of the mutual information objective. this is a lower bound, but does not seem so horrifying. 
+# profiling is definitely in order though. computation time will be heavily dependent on sequence length as well 
+
+
+profiler = cProfile.Profile()
+
+profiler.enable()
+    
 parameter_prior = np.ones(parameter_resolution) / parameter_resolution
 print(mutual_information(parameter_prior, n_obs))
 
@@ -41,6 +53,14 @@ parameter_prior = np.zeros(parameter_resolution)
 parameter_prior[0] = 0.5
 parameter_prior[-1] = 0.5
 print(mutual_information(parameter_prior, n_obs))
+
+profiler.disable()
+stats = pstats.Stats(profiler).sort_stats('cumtime')
+stats.print_stats(30)
+profiler.dump_stats("agent.prof")
+
+#(graph,) = pydot.graph_from_dot_file('callingGraph.dot')
+#graph.write_png('callingGraph.png')
 
 #plt.bar(np.linspace(0, 1, parameter_resolution), parameter_prior, width=0.8 / parameter_resolution)
 #plt.show()
