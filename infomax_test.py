@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import itertools
 import cProfile, pstats
 import pickle
+import os
 
 def observation_likelihood(observation, parameter):
     # the probability of observing this 1 value given the parameter value
@@ -20,31 +21,39 @@ def sequence_marginal(observations, parameter_prior):
     all_like = [sequence_likelihood(observations, param_values[i]) * parameter_prior[i] for i in range(len(parameter_prior))]
     return sum(all_like)
 
-def mutual_information(parameter_prior, n_obs):
+def mutual_information(parameter_prior, n_obs, db=None):
     # TODO don't I calculate all likelihoods twice here?
     # TODO save / reload
-    param_values = np.linspace(0, 1, len(parameter_prior))
-    obs_values = [list(i) for i in itertools.product([0, 1], repeat=n_obs)]
-    mi = 0
-    
-    sequence_marginals = [sequence_marginal(obs_values[o], parameter_prior) for o in range(len(obs_values))]
-    # cycle over all possible parameter values
-    for th in range(len(param_values)):
-        # if the prior assigns 0 probability to the param value, it will not contribute to the MI
-        if parameter_prior[th] == 0: continue
-        # cycle over all possible observations        
-        for o in range(len(obs_values)):
-            if sequence_marginals[o] == 0: continue
-            log_marginal = np.log(sequence_marginals[o])  # could be outside
-            # if the probability of the observation given the parameter is 0, the contribution to the MI is 0 too
-            act_like = sequence_likelihood(obs_values[o], param_values[th])
-            if act_like > 0:
-                mi += parameter_prior[th] * act_like * (np.log(act_like) - log_marginal)    
-    return mi
+
+    if not db is None and (tuple(parameter_prior), n_obs) in db.keys():
+        mi = db[(tuple(parameter_prior), n_obs)]
+    else:
+        param_values = np.linspace(0, 1, len(parameter_prior))
+        obs_values = [list(i) for i in itertools.product([0, 1], repeat=n_obs)]
+        mi = 0
+        
+        sequence_marginals = [sequence_marginal(obs_values[o], parameter_prior) for o in range(len(obs_values))]
+        # cycle over all possible parameter values
+        for th in range(len(param_values)):
+            # if the prior assigns 0 probability to the param value, it will not contribute to the MI
+            if parameter_prior[th] == 0: continue
+            # cycle over all possible observations        
+            for o in range(len(obs_values)):
+                if sequence_marginals[o] == 0: continue
+                log_marginal = np.log(sequence_marginals[o])  # could be outside
+                # if the probability of the observation given the parameter is 0, the contribution to the MI is 0 too
+                act_like = sequence_likelihood(obs_values[o], param_values[th])
+                if act_like > 0:
+                    mi += parameter_prior[th] * act_like * (np.log(act_like) - log_marginal) 
+    if not db is None:
+        db[(tuple(parameter_prior), n_obs)] = mi
+        return mi, db
+    else:
+        return mi
 
 
-parameter_resolution = 5
-n_obs = 1
+parameter_resolution = 10
+n_obs = 10
 
 # 100 particles into 10 bins: 10^100 possibilities - not so nice
 
@@ -61,6 +70,11 @@ parameter_prior = np.ones(parameter_resolution) * (particleQuantum * initialPart
 # print(parameter_prior)
 actMI = mutual_information(parameter_prior, n_obs)
 
+mi_db = {}
+if os.path.isfile("mi_db.pickle"):
+    with open("mi_db.pickle", "rb") as file:
+        mi_db = pickle.load(file)
+
 maxOptimStep = 20
 printRes = 1
 for i in range(maxOptimStep):
@@ -76,7 +90,7 @@ for i in range(maxOptimStep):
             candidate_prior[sourceBin] -= particleQuantum
             candidate_prior[targetBin] += particleQuantum
             #print(candidate_prior)
-            candidateMI = mutual_information(candidate_prior, n_obs)
+            candidateMI, mi_db = mutual_information(candidate_prior, n_obs, mi_db)
             if candidateMI >= maxMI: 
                 maxMI, maxPrior = candidateMI, np.array(candidate_prior)
     if maxMI == actMI:
@@ -87,8 +101,8 @@ for i in range(maxOptimStep):
         # print(actMI, parameter_prior)
 print("Result of optimisation: MI=", actMI, parameter_prior)
 
-with open("e.pickle", "wb") as file:
-    pickle.dump(parameter_prior, file)
+with open("mi_db.pickle", "wb") as file:
+    pickle.dump(mi_db, file)
 
 # can I define an even simpler basis set? some series of deltas and then some near-deltas and at the end the uniform
 # one problem is that the deltas are usually of different heights in the optimal prior. but maybe this can be disregarded 
