@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import itertools
 import cProfile, pstats
+import pickle
 
 def observation_likelihood(observation, parameter):
     # the probability of observing this 1 value given the parameter value
@@ -42,8 +43,8 @@ def mutual_information(parameter_prior, n_obs):
     return mi
 
 
-parameter_resolution = 10
-n_obs = 10
+parameter_resolution = 5
+n_obs = 1
 
 # 100 particles into 10 bins: 10^100 possibilities - not so nice
 
@@ -86,6 +87,8 @@ for i in range(maxOptimStep):
         # print(actMI, parameter_prior)
 print("Result of optimisation: MI=", actMI, parameter_prior)
 
+with open("e.pickle", "wb") as file:
+    pickle.dump(parameter_prior, file)
 
 # can I define an even simpler basis set? some series of deltas and then some near-deltas and at the end the uniform
 # one problem is that the deltas are usually of different heights in the optimal prior. but maybe this can be disregarded 
