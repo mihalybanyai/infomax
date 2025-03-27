@@ -6,6 +6,7 @@ import pickle
 import os
 
 def observation_likelihood(observation, parameter):
+    # TODO this is the model, everything else is scaffolding
     # the probability of observing this 1 value given the parameter value
     # Bernoulli distribution
     return parameter if observation == 1 else (1-parameter) 
@@ -17,18 +18,20 @@ def sequence_likelihood(observations, parameter):
 
 def sequence_marginal(observations, parameter_prior):
     # probability of observing the sequence given the entire prior distribution of the parameter instead of one specific value
+    # TODO take range as input
     param_values = np.linspace(0, 1, len(parameter_prior))
     all_like = [sequence_likelihood(observations, param_values[i]) * parameter_prior[i] for i in range(len(parameter_prior))]
     return sum(all_like)
 
-def mutual_information(parameter_prior, n_obs, db=None):
+def mutual_information(parameter_prior, n_obs, param_values=None, db=None):
     # TODO don't I calculate all likelihoods twice here?
     # TODO save / reload
 
     if not db is None and (tuple(parameter_prior), n_obs) in db.keys():
         mi = db[(tuple(parameter_prior), n_obs)]
     else:
-        param_values = np.linspace(0, 1, len(parameter_prior))
+        if not param_values is None:
+            param_values = np.linspace(0, 1, len(parameter_prior))
         obs_values = [list(i) for i in itertools.product([0, 1], repeat=n_obs)]
         mi = 0
         
@@ -52,77 +55,94 @@ def mutual_information(parameter_prior, n_obs, db=None):
         return mi
 
 
-parameter_resolution = 10
-n_obs = 10
+def particle_local_search_optim(parameter_resolution, n_obs, initialParticlesPerBin, maxOptimStep, printRes):
 
-# 100 particles into 10 bins: 10^100 possibilities - not so nice
+    # what is a reasonable basis for this? one could just start from the uniform, and move one particle at a time, 
+    # that's roughly 90 possibilities in each step. to arrive to a fully binary distribution, one would need at least 80 steps, 
+    # so 7200 evaluations of the mutual information objective. this is a lower bound, but does not seem so horrifying. 
+    # profiling is definitely in order though. computation time will be heavily dependent on sequence length as well 
 
-# what is a reasonable basis for this? one could just start from the uniform, and move one particle at a time, 
-# that's roughly 90 possibilities in each step. to arrive to a fully binary distribution, one would need at least 80 steps, 
-# so 7200 evaluations of the mutual information objective. this is a lower bound, but does not seem so horrifying. 
-# profiling is definitely in order though. computation time will be heavily dependent on sequence length as well 
+    # TODO can I define an even simpler basis set? some series of deltas and then some near-deltas and at the end the uniform
+    # one problem is that the deltas are usually of different heights in the optimal prior. but maybe this can be disregarded 
+    # and the optimality sequence still retained
+    # probably a sequence of powers of 2, up to some number, and then the uniform
 
-initialParticlesPerBin = 2
-numberOfParticles = parameter_resolution * initialParticlesPerBin
-particleQuantum = 1. / numberOfParticles
-# print(particleQuantum)
-parameter_prior = np.ones(parameter_resolution) * (particleQuantum * initialParticlesPerBin)
-# print(parameter_prior)
-actMI = mutual_information(parameter_prior, n_obs)
+    initialParticlesPerBin = 2
+    numberOfParticles = parameter_resolution * initialParticlesPerBin
+    particleQuantum = 1. / numberOfParticles
+    # print(particleQuantum)
+    parameter_prior = np.ones(parameter_resolution) * (particleQuantum * initialParticlesPerBin)
+    # print(parameter_prior)
+    actMI = mutual_information(parameter_prior, n_obs)
 
-mi_db = {}
-if os.path.isfile("mi_db.pickle"):
-    with open("mi_db.pickle", "rb") as file:
-        mi_db = pickle.load(file)
+    mi_db = {}
+    if os.path.isfile("mi_db.pickle"):
+        with open("mi_db.pickle", "rb") as file:
+            mi_db = pickle.load(file)
 
-maxOptimStep = 20
-printRes = 1
-for i in range(maxOptimStep):
-    if i % printRes == 0:
-        print("optimisation step", i+1, "/", maxOptimStep)
-    maxMI = actMI
-    maxPrior = np.array(parameter_prior)
-    for sourceBin in range(parameter_resolution):
-        if parameter_prior[sourceBin] == 0.0: continue
-        for targetBin in range(parameter_resolution):            
-            if targetBin == sourceBin or parameter_prior[targetBin] == 1.1 : continue
-            candidate_prior = np.array(parameter_prior)
-            candidate_prior[sourceBin] -= particleQuantum
-            candidate_prior[targetBin] += particleQuantum
-            #print(candidate_prior)
-            candidateMI, mi_db = mutual_information(candidate_prior, n_obs, mi_db)
-            if candidateMI >= maxMI: 
-                maxMI, maxPrior = candidateMI, np.array(candidate_prior)
-    if maxMI == actMI:
-        print("Local optimum reached after", i, "steps")
-        break
-    else:
-        actMI, parameter_prior = maxMI, np.array(maxPrior)
-        # print(actMI, parameter_prior)
-print("Result of optimisation: MI=", actMI, parameter_prior)
+    maxOptimStep = 50
+    printRes = 1
+    for i in range(maxOptimStep):
+        if i % printRes == 0:
+            print("optimisation step", i+1, "/", maxOptimStep)
+        maxMI = actMI
+        maxPrior = np.array(parameter_prior)
+        for sourceBin in range(parameter_resolution):
+            if parameter_prior[sourceBin] == 0.0: continue
+            for targetBin in range(parameter_resolution):            
+                if targetBin == sourceBin or parameter_prior[targetBin] == 1.1 : continue
+                candidate_prior = np.array(parameter_prior)
+                candidate_prior[sourceBin] -= particleQuantum
+                candidate_prior[targetBin] += particleQuantum
+                #print(candidate_prior)
+                candidateMI, mi_db = mutual_information(candidate_prior, n_obs, mi_db)
+                if candidateMI >= maxMI: 
+                    maxMI, maxPrior = candidateMI, np.array(candidate_prior)
+        if maxMI == actMI:
+            print("Local optimum reached after", i, "steps")
+            break
+        else:
+            actMI, parameter_prior = maxMI, np.array(maxPrior)
+            # print(actMI, parameter_prior)
+    print("Result of optimisation: MI=", actMI, parameter_prior)
 
-with open("mi_db.pickle", "wb") as file:
-    pickle.dump(mi_db, file)
+    with open("mi_db.pickle", "wb") as file:
+        pickle.dump(mi_db, file)
 
-# can I define an even simpler basis set? some series of deltas and then some near-deltas and at the end the uniform
-# one problem is that the deltas are usually of different heights in the optimal prior. but maybe this can be disregarded 
-# and the optimality sequence still retained
-# probably a sequence of powers of 2, up to some number, and then the uniform
+def blahut_arimoto_optim(parameter_resolution, n_obs, observation_likelihood):
+    # TODO implement this from the supplementary of Abbott
+    pass
+
+def optimise_MI(parameter_resolution, n_obs, observation_likelihood, print_res):
+    # TODO make this call more specific algorithms
+    # TODO can I handle multidimensional cases?
+    # TODO profiling option should be here
+    pass
+
+parameter_resolution = 20
+n_obs = 5
 
 
+###
+### some simple tests to see when K jumps
+###
+#print(mutual_information([0.4, 0.1, 0.1, 0.4], 7, param_values=[0., .4, .6, 1.]))
+#print(mutual_information([0.4, 0.2, 0.4], 7, param_values=[0., .5, 1.]))
+
+###
+### profiling some simple case TODO should be inside the optimiser call as an option
+###
 # profiler = cProfile.Profile()
-
 # profiler.enable()
-    
 # parameter_prior = np.ones(parameter_resolution) / parameter_resolution
 # print(mutual_information(parameter_prior, n_obs))
 
-if n_obs == 1:
+"""if n_obs == 1:
     parameter_prior = np.zeros(parameter_resolution) 
     parameter_prior[0] = 0.5
     parameter_prior[-1] = 0.5
     print("Optimal MI for 1 observation", mutual_information(parameter_prior, n_obs))
-
+"""
 # profiler.disable()
 # stats = pstats.Stats(profiler).sort_stats('cumtime')
 # stats.print_stats(30)
@@ -131,5 +151,8 @@ if n_obs == 1:
 #(graph,) = pydot.graph_from_dot_file('callingGraph.dot')
 #graph.write_png('callingGraph.png')
 
+###
+### some plotting TODO should be inside the optimiser as an option
+###
 #plt.bar(np.linspace(0, 1, parameter_resolution), parameter_prior, width=0.8 / parameter_resolution)
 #plt.show()
