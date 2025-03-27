@@ -1,3 +1,5 @@
 *.prof
 *.dot
 *.png
+.DS_Store
+*.pickle
