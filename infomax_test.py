@@ -156,3 +156,5 @@ n_obs = 5
 ###
 #plt.bar(np.linspace(0, 1, parameter_resolution), parameter_prior, width=0.8 / parameter_resolution)
 #plt.show()
+
+# TODO check if the expected return actually changes favourably for p*
