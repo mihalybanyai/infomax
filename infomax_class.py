@@ -17,8 +17,7 @@ class distribution:
             self.set_probs(prob_densities)
 
     def set_probs(self, prob_densities):
-        # TODO why does this assert fail?
-        #assert(np.abs(np.sum(prob_densities)) < 1e-5)
+        assert 1.0 - np.abs(np.sum(prob_densities)) < 1e-7
         self.eval_points = np.linspace(self.range[0], self.range[1], len(list(prob_densities)))
         self.prob_densities = prob_densities
         self.eval_num = len(prob_densities)
@@ -109,12 +108,33 @@ class generative_model(ABC):
             plt.subplot(1, 2, 2)
             plt.plot(MIs)
 
-    def posterior(self, observations, plot=True):
+    def posterior(self, observations):
         unnorm_post = np.array([self.sequence_likelihood(observations, self.prior.eval_points[th]) * self.prior.prob_densities[th] for th in range(self.prior.eval_num)])
         post = unnorm_post / np.sum(unnorm_post)
-        post_distr = distribution((0, 1), post)
-        if plot:
-            post_distr.plot()
+        return distribution(self.prior.range, post)
+
+    def predictive_accuracy(self, true_probs, N):
+        # get all sequences
+        all_sequences = self.possible_observation_sequences(N)
+        # calculate the true probability with which each sequence comes up
+        true_seq_probs = np.array([np.prod(np.array([true_probs[obs] for obs in seq])) for seq in all_sequences])
+        # get the posterior for each sequence, and set it as prior
+        kl_score = 0
+        for seq_idx, seq in enumerate(all_sequences):
+            post = self.posterior(seq)
+            # calculate the marginal likelihood of each single outcome 
+            marginal_likelihood = np.zeros(self.n_possible_obs)
+            for outcome in range(self.n_possible_obs):
+                marginal_likelihood[outcome] = np.sum(np.array([self.observation_likelihood(outcome, post.eval_points[p]) * post.prob_densities[p] for p in range(post.eval_num)]))
+            # calculate some scores, e.g. KL from true distr, weighted by true obs. prob.            
+            act_kl =0
+            for idx, px in enumerate(true_probs):
+                py = marginal_likelihood[idx]
+                if px > 0 and py > 0:
+                    act_kl += px * (np.log(px) - np.log(py))  # TODO could be the other way around
+            kl_score += act_kl * true_seq_probs[seq_idx]
+            #print(marginal_likelihood, true_seq_probs[seq_idx], act_kl)
+        return kl_score
 
 
 
@@ -128,7 +148,7 @@ class biased_coin_GM(generative_model):
         return parameter if observation == 1 else (1-parameter) 
 
 
-x = [0, 1, 1, 1, 0]
+"""x = [0, 1, 1, 1, 0]
 theta_res = 51
 
 gm = biased_coin_GM()
@@ -141,4 +161,17 @@ gm2.set_prior(np.ones(theta_res) / theta_res)
 plt.subplot(2, 1, 2)
 gm2.posterior(x, plot=True)
 
-plt.show()
+plt.show()"""
+
+
+true_probs = [0.9, 0.1]
+N = 4
+theta_res = 51
+
+gm = biased_coin_GM()
+gm.blahut_arimoto_prior(N, theta_res, 1000, 1e-7, plot=False)
+print(gm.predictive_accuracy(true_probs, N))
+
+gm2 = biased_coin_GM()
+gm2.set_prior(np.ones(theta_res) / theta_res)
+print(gm2.predictive_accuracy(true_probs, N))
