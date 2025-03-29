@@ -30,7 +30,7 @@ def mutual_information(parameter_prior, n_obs, param_values=None, db=None):
     if not db is None and (tuple(parameter_prior), n_obs) in db.keys():
         mi = db[(tuple(parameter_prior), n_obs)]
     else:
-        if not param_values is None:
+        if param_values is None:
             param_values = np.linspace(0, 1, len(parameter_prior))
         obs_values = [list(i) for i in itertools.product([0, 1], repeat=n_obs)]
         mi = 0
@@ -109,18 +109,9 @@ def particle_local_search_optim(parameter_resolution, n_obs, initialParticlesPer
     with open("mi_db.pickle", "wb") as file:
         pickle.dump(mi_db, file)
 
-def blahut_arimoto_optim(parameter_resolution, n_obs, observation_likelihood):
-    # TODO implement this from the supplementary of Abbott
-    pass
 
-def optimise_MI(parameter_resolution, n_obs, observation_likelihood, print_res):
-    # TODO make this call more specific algorithms
-    # TODO can I handle multidimensional cases?
-    # TODO profiling option should be here
-    pass
-
-parameter_resolution = 20
-n_obs = 5
+parameter_resolution = 5
+n_obs = 2
 
 
 ###
@@ -134,8 +125,8 @@ n_obs = 5
 ###
 # profiler = cProfile.Profile()
 # profiler.enable()
-# parameter_prior = np.ones(parameter_resolution) / parameter_resolution
-# print(mutual_information(parameter_prior, n_obs))
+parameter_prior = np.ones(parameter_resolution) / parameter_resolution
+print(mutual_information(parameter_prior, n_obs))
 
 """if n_obs == 1:
     parameter_prior = np.zeros(parameter_resolution) 
