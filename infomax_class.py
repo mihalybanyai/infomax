@@ -164,7 +164,7 @@ gm2.posterior(x, plot=True)
 plt.show()"""
 
 
-true_probs = [0.9, 0.1]
+true_probs = [0.9999, 0.0001]
 N = 4
 theta_res = 51
 
