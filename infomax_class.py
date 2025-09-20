@@ -23,6 +23,9 @@ class distribution:
         self.eval_num = len(prob_densities)
         self.bin_width = (self.range[1] - self.range[0]) / self.eval_num
 
+    def sample(self, M):
+        return np.random.choice(self.eval_points, size=M, p=self.prob_densities)
+
     def plot(self):
         plt.bar(self.eval_points, self.prob_densities, width=self.bin_width * 0.8)
 
@@ -54,10 +57,10 @@ class generative_model(ABC):
         # p(x | \theta)
         pass
 
-    def observation_marginal(self, observation, prior):
+    def observation_marginal(self, observation):
         # p(x) = \sum_\theta p(x | \theta) p(\theta)
-        # TODO implement this
-        pass
+        all_like = [self.observation_likelihood(observation, self.prior.eval_points[i]) * self.prior.prob_densities[i] for i in range(self.prior.eval_num)]
+        return sum(all_like)
 
     def sequence_likelihood(self, observations, param_value):
         # p(X | theta) = \prod_x p(x | \theta)
@@ -65,37 +68,60 @@ class generative_model(ABC):
         # product of the individual likelihoods, as observations are i.i.d.
         return np.prod(np.array([self.observation_likelihood(o, param_value) for o in observations]))
 
-    def sequence_marginal(self, observations, prior):
+    def sequence_marginal(self, observations):
         # p(X) = \sum_\theta p(X | \theta) p(\theta)
         # probability of observing the sequence given the entire prior distribution of the parameter instead of one specific value
         all_like = [self.sequence_likelihood(observations, self.prior.eval_points[i]) * self.prior.prob_densities[i] for i in range(self.prior.eval_num)]
         return sum(all_like)
 
-    def _KL_components(self, N, prior_samples=None):
+    def _KL_components(self, N):
         # TODO implement the version using the prior samples
         storage_key = tuple(list(self.prior.prob_densities) + [N])
         if not storage_key in self.kl_components.keys():
             all_sequences = self.possible_observation_sequences(N)
-            all_sequence_likelihoods = np.zeros((self.prior.eval_num, len(all_sequences)))
+            all_sequence_likelihoods = np.zeros((self.prior.eval_num, len(all_sequences)))  # p(X | \theta) \forall X, \theta
             for i_theta, p_theta in enumerate(self.prior.prob_densities):
                 if p_theta == 0: continue
                 for i_obs, obs in enumerate(all_sequences):
                     all_sequence_likelihoods[i_theta, i_obs] = self.sequence_likelihood(obs, self.prior.eval_points[i_theta])
 
-            like_prior = all_sequence_likelihoods.transpose() * self.prior.prob_densities
-            sequence_marginals = np.sum(like_prior.transpose(), axis=0)
-            #log_sequence_marginals = np.log(sequence_marginals)  # there will be nans
+            like_prior = all_sequence_likelihoods.transpose() * self.prior.prob_densities  # p(X | \theta) p(\theta) \forall X, \theta
+            sequence_marginals = np.sum(like_prior.transpose(), axis=0)  # p(X) \forall X
+
             log_sequence_marginals = np.log(sequence_marginals, out=np.zeros_like(sequence_marginals, dtype=np.float64), where=(sequence_marginals!=0))
-            #log_sequence_likelihoods = np.log(all_sequence_likelihoods)  # there will be nans
             log_sequence_likelihoods = np.log(all_sequence_likelihoods, out=np.zeros_like(all_sequence_likelihoods, dtype=np.float64), where=(all_sequence_likelihoods!=0))
             logdiff = log_sequence_likelihoods - log_sequence_marginals
-            kl_components = all_sequence_likelihoods.transpose() * (logdiff.transpose())
+
+            kl_components = all_sequence_likelihoods.transpose() * (logdiff.transpose())  # p(X | \theta) [\log p(X | \theta) - \log p(\theta)] \forall X, \theta
             self.kl_components[storage_key] = kl_components
         return self.kl_components[storage_key]
+    
+    def _observation_prob_ratios(self, observation):
+        # p(x | \theta) / \sum_\theta p(x | \theta) p(\theta)
+        likelihoods = np.array([self.observation_likelihood(observation, self.prior.eval_points[i]) for i in range(self.prior.eval_num)])
+        marginal = np.sum(likelihoods * self.prior.prob_densities)
+        return likelihoods / marginal
+    
+    def _predictive_distr(self, act_prior):
+        possible_observations = list(range(self.n_possible_obs))
+        predictive_probs = [sum([self.observation_likelihood(o, act_prior.eval_points[th]) * act_prior.prob_densities[th] for th in range(act_prior.eval_num)]) for o in possible_observations]
+        return distribution(possible_observations, predictive_probs)
 
     def KL_divergences(self, N, posterior=None, M=0):
-        # TODO implement the version with sampling
-        return np.nansum(self._KL_components(N), axis=0)
+        future_KLs = np.nansum(self._KL_components(N), axis=0)  # KL[p(X | \theta) || p(X)] \forall \theta
+        if posterior is None:
+            return future_KLs
+        else:
+            # TODO why is this sometimes negative?
+            # take M samples from the posterior-predictive distribution \sum_\theta p(x | \theta) p(\theta | X_old)
+            samples = self._predictive_distr(posterior).sample(M)
+            print(samples)
+            sample_prob_ratios = np.array([self._observation_prob_ratios(s) for s in samples])  # M x theta_res
+            print("ratio", sample_prob_ratios)
+            log_sample_prob_ratios = np.log(sample_prob_ratios, out=np.zeros_like(sample_prob_ratios, dtype=np.float64), where=(sample_prob_ratios!=0))
+            print("log", log_sample_prob_ratios)
+            print("product", sample_prob_ratios * log_sample_prob_ratios)
+            return np.sum(sample_prob_ratios * (log_sample_prob_ratios + future_KLs), axis=0)
 
     def mutual_information(self, N, posterior=None, M=0):
         # TODO implement the version with sampling
@@ -160,10 +186,13 @@ class biased_coin_GM(generative_model):
         return parameter if observation == 1 else (1-parameter) 
 
 
-"""x = [0, 1, 1, 1, 0]
-theta_res = 51
-
+"""
 gm = biased_coin_GM()
+gm.set_prior(prob_densities=np.ones(5)/5)
+gm._observation_prob_ratios(1)
+
+x = [0, 1, 1, 1, 0]
+theta_res = 51
 gm.blahut_arimoto_prior(len(x), theta_res, 1000, 1e-7, plot=False)
 plt.subplot(2, 1, 1)
 gm.posterior(x, plot=True)
