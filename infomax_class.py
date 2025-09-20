@@ -51,19 +51,28 @@ class generative_model(ABC):
 
     @abstractmethod
     def observation_likelihood(self, observation, param_value):
+        # p(x | \theta)
+        pass
+
+    def observation_marginal(self, observation, prior):
+        # p(x) = \sum_\theta p(x | \theta) p(\theta)
+        # TODO implement this
         pass
 
     def sequence_likelihood(self, observations, param_value):
+        # p(X | theta) = \prod_x p(x | \theta)
         # the probability of observing every observation in the sequence, given the parameter
         # product of the individual likelihoods, as observations are i.i.d.
         return np.prod(np.array([self.observation_likelihood(o, param_value) for o in observations]))
 
     def sequence_marginal(self, observations, prior):
+        # p(X) = \sum_\theta p(X | \theta) p(\theta)
         # probability of observing the sequence given the entire prior distribution of the parameter instead of one specific value
-        all_like = [sequence_likelihood(observations, self.prior.eval_points[i]) * self.prior.prob_densities[i] for i in range(self.prior.eval_num)]
+        all_like = [self.sequence_likelihood(observations, self.prior.eval_points[i]) * self.prior.prob_densities[i] for i in range(self.prior.eval_num)]
         return sum(all_like)
 
-    def _KL_components(self, N):
+    def _KL_components(self, N, prior_samples=None):
+        # TODO implement the version using the prior samples
         storage_key = tuple(list(self.prior.prob_densities) + [N])
         if not storage_key in self.kl_components.keys():
             all_sequences = self.possible_observation_sequences(N)
@@ -84,13 +93,15 @@ class generative_model(ABC):
             self.kl_components[storage_key] = kl_components
         return self.kl_components[storage_key]
 
-    def KL_divergences(self, N):
+    def KL_divergences(self, N, posterior=None, M=0):
+        # TODO implement the version with sampling
         return np.nansum(self._KL_components(N), axis=0)
 
-    def mutual_information(self, N):
+    def mutual_information(self, N, posterior=None, M=0):
+        # TODO implement the version with sampling
         return np.nansum(self.prior.prob_densities * self._KL_components(N))
 
-    def blahut_arimoto_prior(self, N, prior_res, n_step, min_delta=0, plot=False):
+    def blahut_arimoto_prior(self, N, prior_res, n_step, posterior=None, M=0, min_delta=0, plot=False):
         self.set_prior(np.ones(prior_res) / prior_res)
         MIs = [self.mutual_information(N)]
 
@@ -109,6 +120,8 @@ class generative_model(ABC):
             plt.plot(MIs)
 
     def posterior(self, observations):
+        if self.prior.prob_densities is None:
+            raise RuntimeError("Prior not set, cannot calculate posterior.")
         unnorm_post = np.array([self.sequence_likelihood(observations, self.prior.eval_points[th]) * self.prior.prob_densities[th] for th in range(self.prior.eval_num)])
         post = unnorm_post / np.sum(unnorm_post)
         return distribution(self.prior.range, post)
@@ -137,7 +150,6 @@ class generative_model(ABC):
         return kl_score
 
 
-
 class biased_coin_GM(generative_model):
     def __init__(self):
         super().__init__((0,1), 2)
@@ -161,7 +173,7 @@ gm2.set_prior(np.ones(theta_res) / theta_res)
 plt.subplot(2, 1, 2)
 gm2.posterior(x, plot=True)
 
-plt.show()"""
+plt.show()
 
 
 true_probs = [0.9999, 0.0001]
@@ -174,4 +186,4 @@ print(gm.predictive_accuracy(true_probs, N))
 
 gm2 = biased_coin_GM()
 gm2.set_prior(np.ones(theta_res) / theta_res)
-print(gm2.predictive_accuracy(true_probs, N))
+print(gm2.predictive_accuracy(true_probs, N))"""
