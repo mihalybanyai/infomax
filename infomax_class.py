@@ -17,7 +17,8 @@ class distribution:
             self.set_probs(prob_densities)
 
     def set_probs(self, prob_densities):
-        assert 1.0 - np.abs(np.sum(prob_densities)) < 1e-7
+        if not 1.0 - np.abs(np.sum(prob_densities)) < 1e-7:
+            raise RuntimeError("Intended prior probabilities normalise to ", np.abs(np.sum(prob_densities)))
         self.eval_points = np.linspace(self.range[0], self.range[1], len(list(prob_densities)))
         self.prob_densities = prob_densities
         self.eval_num = len(prob_densities)
@@ -73,9 +74,21 @@ class generative_model(ABC):
         # probability of observing the sequence given the entire prior distribution of the parameter instead of one specific value
         all_like = [self.sequence_likelihood(observations, self.prior.eval_points[i]) * self.prior.prob_densities[i] for i in range(self.prior.eval_num)]
         return sum(all_like)
+    
+    def _observation_prob_ratios(self, observation):
+        # p(x | \theta) / \sum_\theta p(x | \theta) p(\theta)
+        likelihoods = np.array([self.observation_likelihood(observation, self.prior.eval_points[i]) for i in range(self.prior.eval_num)])
+        marginal = np.sum(likelihoods * self.prior.prob_densities)
+        #print("likes", likelihoods, "marg", marginal)
+        return likelihoods / marginal
+    
+    def _predictive_distr(self, act_prior):
+        possible_observations = list(range(self.n_possible_obs))
+        predictive_probs = [sum([self.observation_likelihood(o, act_prior.eval_points[th]) * act_prior.prob_densities[th] for th in range(act_prior.eval_num)]) for o in possible_observations]
+        return distribution(possible_observations, predictive_probs)
 
-    def _KL_components(self, N):
-        # TODO implement the version using the prior samples
+    def KL_divergences(self, N, posterior=None, M=0, clip=1e-6):
+        # we reuse computation in this house
         storage_key = tuple(list(self.prior.prob_densities) + [N])
         if not storage_key in self.kl_components.keys():
             all_sequences = self.possible_observation_sequences(N)
@@ -94,50 +107,40 @@ class generative_model(ABC):
 
             kl_components = all_sequence_likelihoods.transpose() * (logdiff.transpose())  # p(X | \theta) [\log p(X | \theta) - \log p(\theta)] \forall X, \theta
             self.kl_components[storage_key] = kl_components
-        return self.kl_components[storage_key]
-    
-    def _observation_prob_ratios(self, observation):
-        # p(x | \theta) / \sum_\theta p(x | \theta) p(\theta)
-        likelihoods = np.array([self.observation_likelihood(observation, self.prior.eval_points[i]) for i in range(self.prior.eval_num)])
-        marginal = np.sum(likelihoods * self.prior.prob_densities)
-        return likelihoods / marginal
-    
-    def _predictive_distr(self, act_prior):
-        possible_observations = list(range(self.n_possible_obs))
-        predictive_probs = [sum([self.observation_likelihood(o, act_prior.eval_points[th]) * act_prior.prob_densities[th] for th in range(act_prior.eval_num)]) for o in possible_observations]
-        return distribution(possible_observations, predictive_probs)
-
-    def KL_divergences(self, N, posterior=None, M=0):
-        future_KLs = np.nansum(self._KL_components(N), axis=0)  # KL[p(X | \theta) || p(X)] \forall \theta
-        if posterior is None:
+        future_KLs = np.nansum(self.kl_components[storage_key], axis=0)  # KL[p(X | \theta) || p(X)] \forall \theta
+        
+        if posterior is None or M==0:
             return future_KLs
         else:
-            # TODO why is this sometimes negative?
             # take M samples from the posterior-predictive distribution \sum_\theta p(x | \theta) p(\theta | X_old)
+            # TODO reuse this part as well
             samples = self._predictive_distr(posterior).sample(M)
-            print(samples)
             sample_prob_ratios = np.array([self._observation_prob_ratios(s) for s in samples])  # M x theta_res
-            print("ratio", sample_prob_ratios)
             log_sample_prob_ratios = np.log(sample_prob_ratios, out=np.zeros_like(sample_prob_ratios, dtype=np.float64), where=(sample_prob_ratios!=0))
-            print("log", log_sample_prob_ratios)
-            print("product", sample_prob_ratios * log_sample_prob_ratios)
-            return np.sum(sample_prob_ratios * (log_sample_prob_ratios + future_KLs), axis=0)
+            print(sample_prob_ratios)
+            # we average over the samples
+            KLs = np.sum(sample_prob_ratios * (log_sample_prob_ratios + future_KLs), axis=0) / M
+            # the sample-based apprixmation can come back negative, so we clip
+            return np.maximum(KLs, 0.) 
 
-    def mutual_information(self, N, posterior=None, M=0):
+    def mutual_information(self, N, posterior=None, M=0, clip=1e-6):
         # TODO implement the version with sampling
-        return np.nansum(self.prior.prob_densities * self._KL_components(N))
+        return np.nansum(self.prior.prob_densities * self.KL_divergences(N, posterior=posterior, M=M, clip=clip))
 
     def blahut_arimoto_prior(self, N, prior_res, n_step, posterior=None, M=0, min_delta=0, plot=False):
         self.set_prior(np.ones(prior_res) / prior_res)
-        MIs = [self.mutual_information(N)]
+        MIs = [self.mutual_information(N, posterior=posterior, M=M)]
 
         for step in range(n_step):
-            exp_kl = np.exp(self.KL_divergences(N))
+            act_kl = self.KL_divergences(N, posterior=posterior, M=M)
+            exp_kl = np.exp(act_kl)
             unnorm_new_p = exp_kl * self.prior.prob_densities
+            print(act_kl, unnorm_new_p)
             self.set_prior(unnorm_new_p / np.sum(unnorm_new_p))
-            MIs.append(self.mutual_information(N))
-            if MIs[-1] - MIs[-2] <= min_delta:
-                break
+            MIs.append(self.mutual_information(N, posterior=posterior, M=M))
+            if posterior is None or M==0:
+                if MIs[-1] - MIs[-2] <= min_delta:
+                    break
 
         if plot:
             plt.subplot(1, 2, 1)
