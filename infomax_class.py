@@ -75,9 +75,12 @@ class generative_model(ABC):
         all_like = [self.sequence_likelihood(observations, self.prior.eval_points[i]) * self.prior.prob_densities[i] for i in range(self.prior.eval_num)]
         return sum(all_like)
     
+    def _likelihoods_for_all_param(self, observation):
+        return np.array([self.observation_likelihood(observation, self.prior.eval_points[i]) for i in range(self.prior.eval_num)])
+
     def _observation_prob_ratios(self, observation):
         # p(x | \theta) / \sum_\theta p(x | \theta) p(\theta)
-        likelihoods = np.array([self.observation_likelihood(observation, self.prior.eval_points[i]) for i in range(self.prior.eval_num)])
+        likelihoods = self._likelihoods_for_all_param(observation)
         marginal = np.sum(likelihoods * self.prior.prob_densities)
         #print("likes", likelihoods, "marg", marginal)
         return likelihoods / marginal
@@ -115,11 +118,14 @@ class generative_model(ABC):
             # take M samples from the posterior-predictive distribution \sum_\theta p(x | \theta) p(\theta | X_old)
             # TODO reuse this part as well
             samples = self._predictive_distr(posterior).sample(M)
+            sample_likelihoods = np.array([self._likelihoods_for_all_param(s) for s in samples])  # M x theta_res
             sample_prob_ratios = np.array([self._observation_prob_ratios(s) for s in samples])  # M x theta_res
             log_sample_prob_ratios = np.log(sample_prob_ratios, out=np.zeros_like(sample_prob_ratios, dtype=np.float64), where=(sample_prob_ratios!=0))
-            print(sample_prob_ratios)
+            #print(sample_prob_ratios)
             # we average over the samples
-            KLs = np.sum(sample_prob_ratios * (log_sample_prob_ratios + future_KLs), axis=0) / M
+            #KLs = np.sum(sample_prob_ratios * (log_sample_prob_ratios + future_KLs), axis=0) / M
+            # TODO why does this work way better than the one in the formulas???
+            KLs = np.sum(sample_likelihoods * (log_sample_prob_ratios + future_KLs), axis=0) / M
             # the sample-based apprixmation can come back negative, so we clip
             return np.maximum(KLs, 0.) 
 
@@ -135,7 +141,7 @@ class generative_model(ABC):
             act_kl = self.KL_divergences(N, posterior=posterior, M=M)
             exp_kl = np.exp(act_kl)
             unnorm_new_p = exp_kl * self.prior.prob_densities
-            print(act_kl, unnorm_new_p)
+            #print(act_kl, unnorm_new_p)
             self.set_prior(unnorm_new_p / np.sum(unnorm_new_p))
             MIs.append(self.mutual_information(N, posterior=posterior, M=M))
             if posterior is None or M==0:
