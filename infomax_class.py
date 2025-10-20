@@ -30,6 +30,10 @@ class distribution:
     def plot(self):
         plt.bar(self.eval_points, self.prob_densities, width=self.bin_width * 0.8)
 
+    def to_array(self):
+        return np.concatenate([np.array(self.eval_points), np.array(self.prob_densities)])
+
+
 
 class generative_model(ABC):
 
